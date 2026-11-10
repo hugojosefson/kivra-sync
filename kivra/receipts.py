@@ -3,7 +3,8 @@
 
 import logging
 from utils.helpers import format_date
-from kivra.models import RECEIPTS_QUERY, RECEIPT_DETAILS_QUERY, KivraReceipt
+from kivra.models import RECEIPT_DETAILS_QUERY, KivraReceipt
+from kivra.pagination import list_receipts
 
 class ReceiptFetcher:
     """Class for fetching receipts from Kivra."""
@@ -31,20 +32,12 @@ class ReceiptFetcher:
         """
         print("\nFetching receipts...")
         
-        # Fetch receipt list
-        variables = {
-            "limit": 20000,
-            "offset": 0,
-            "search": None
-        }
-        
         try:
-            data = self.api_client.graphql_query("Receipts", RECEIPTS_QUERY, variables)
-            
-            receipts = data.get('data', {}).get('receiptsV2', {})
-            receipt_list = receipts.get('list', [])
-            total_receipts = receipts.get('total', 0)
-            
+            receipt_list, total_receipts, errors = list_receipts(self.api_client)
+            if errors:
+                raise RuntimeError("Incomplete receipt listing")
+            receipts = {"list": receipt_list, "total": total_receipts}
+
             print(f"\nFound {total_receipts} receipts")
             
             # Report receipt list for storage
