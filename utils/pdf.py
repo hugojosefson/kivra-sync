@@ -4,12 +4,14 @@
 import io
 import logging
 import html
-from weasyprint import HTML
+from weasyprint import HTML, default_url_fetcher
 
-# Configure weasyprint logging
-logger = logging.getLogger('weasyprint')
-logger.setLevel(logging.ERROR)
-logger.handlers = [logging.FileHandler('./weasyprint.log')]  # Remove the default stderr handler
+# Renderer and font logs can contain document data.
+# Stop propagation because child loggers can use their own levels.
+for name in ("weasyprint", "fontTools"):
+    logger = logging.getLogger(name)
+    logger.handlers = [logging.NullHandler()]
+    logger.propagate = False
 
 def text_to_html(text_content, title=None):
     """
@@ -92,10 +94,26 @@ def html_to_pdf(html_content):
     Returns:
         bytes: PDF content as bytes, or None if conversion failed
     """
+    blocked = []
+
+    def fetch_resource(url, *args, **kwargs):
+        # Do not read local files or send requests from document HTML.
+        if not url.startswith("data:"):
+            blocked.append(True)
+            raise ValueError("External HTML resource")
+        try:
+            return default_url_fetcher(url, *args, **kwargs)
+        except Exception:
+            blocked.append(True)
+            raise ValueError("Invalid HTML resource") from None
+
     try:
         pdf_buffer = io.BytesIO()
-        HTML(string=html_content).write_pdf(pdf_buffer)
+        HTML(string=html_content, url_fetcher=fetch_resource).write_pdf(pdf_buffer)
+        if blocked:
+            logging.error("HTML conversion failure: missing resources")
+            return None
         return pdf_buffer.getvalue()
-    except Exception as e:
-        logging.error(f"Error converting HTML to PDF: {str(e)}")
+    except Exception:
+        logging.error("HTML conversion failure")
         return None
