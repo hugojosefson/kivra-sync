@@ -11,7 +11,7 @@ from storage.verify import verify_export
 from storage.filesystem import FileSystemStoreProvider
 from interaction.web import WebInteractionProvider
 from interaction.summary import completion_message
-from test_downloads import SyntheticExportCase
+from test_downloads import RECEIPT, SyntheticExportCase, receipt_page
 
 
 class ExportTests(SyntheticExportCase):
@@ -80,6 +80,22 @@ class ExportTests(SyntheticExportCase):
         _, stats = self.run_export()
         stats["convert_html"] = "false"
         self.store.report_run(stats)
+        self.assertEqual(verify_export(self.store), 1)
+
+    def test_attachment_failure_returns_nonzero_and_recovery_verifies_every_file(self):
+        self.api.graphql_query.side_effect = lambda op, q, v: (
+            receipt_page([{**RECEIPT, "attachments": [{"id": "synthetic"}]}])
+            if op == "Receipts" else self.query(op, q, v)
+        )
+        self.api.get_receipt_attachment.side_effect = RuntimeError("synthetic")
+        code, stats = self.run_export()
+        self.assertEqual(code, 1)
+        self.assertEqual(stats["receipts_failed"], 1)
+        self.assertEqual(verify_export(self.store), 1)
+        self.api.get_receipt_attachment.side_effect = None
+        self.assertEqual(self.run_export()[0], 0)
+        self.assertEqual(verify_export(self.store), 0)
+        next(self.root.rglob("*_part0.pdf")).unlink()
         self.assertEqual(verify_export(self.store), 1)
 
     def test_report_failure_returns_nonzero(self):

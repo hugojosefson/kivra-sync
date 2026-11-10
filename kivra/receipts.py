@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 
+from kivra.attachments import fetch_attachments
 from kivra.export import export_items, result
 from kivra.models import RECEIPT_DETAILS_QUERY, KivraReceipt
 from kivra.pagination import list_receipts
@@ -34,14 +35,16 @@ class ReceiptFetcher:
             (item.get("store") or {}).get("name") or "unknown_store"
         )
         metadata = receipt.get_metadata()
+        attachments = item.get("attachments")
+        if attachments is None:
+            attachments = []
+        if attachments != []:
+            metadata["attachments"] = attachments
         if not receipt.key:
             return result(metadata, [{"reason": "missing_key"}])
         if self.document_store.is_complete(metadata):
             return result(metadata, [], skipped=True)
-        issues = []
-        # The listing includes attachments but specifies no download endpoint.
-        if item.get("attachments"):
-            issues.append({"reason": "unsupported_attachment"})
+        issues, saved_parts = [], []
         try:
             response = self.api_client.graphql_query(
                 "ReceiptDetails", RECEIPT_DETAILS_QUERY, {"key": receipt.key}
@@ -51,7 +54,9 @@ class ReceiptFetcher:
             details = response["data"]["receiptV2"]
             if not isinstance(details, dict) or details.get("key") != receipt.key:
                 raise ValueError("Missing receipt details")
-            if not self.document_store.report_metadata(details, metadata):
+            if not self.document_store.report_metadata(
+                {**details, "attachments": attachments}, metadata
+            ):
                 issues.append({"reason": "metadata_storage_error"})
             url = f"https://app.api.kivra.com/v1/user/{self.api_client.actor_key}/receipts/{receipt.key}"
             data = self.api_client.get_pdf(url)
@@ -59,8 +64,20 @@ class ReceiptFetcher:
             pdf_metadata = receipt.get_metadata(content_type="application/pdf")
             if not self.document_store.store(data, pdf_metadata):
                 issues.append({"reason": "content_storage_error"})
-            if not issues and not self.document_store.complete_document(metadata, [pdf_metadata]):
-                issues.append({"reason": "completion_storage_error"})
+            else:
+                saved_parts.append(pdf_metadata)
         except Exception as error:
             issues.append({"reason": "document_error", **error_details(error)})
+        attachment_issues, attachment_parts = fetch_attachments(
+            self.api_client, self.document_store, receipt, attachments
+        )
+        issues.extend(attachment_issues)
+        saved_parts.extend(attachment_parts)
+        if issues:
+            return result(metadata, issues)
+        try:
+            if not self.document_store.complete_document(metadata, saved_parts):
+                issues.append({"reason": "completion_storage_error"})
+        except Exception as error:
+            issues.append({"reason": "completion_storage_error", **error_details(error)})
         return result(metadata, issues)

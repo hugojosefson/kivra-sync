@@ -161,13 +161,13 @@ These checks do not prove that each PDF page has correct content.
 SHA-256 checks find local changes after storage, not subsequent changes on Kivra.
 
 Letter parts support PDF, plain text, and HTML.
-Unknown types, missing parts, and receipt attachments cause a failure result.
+Unknown content types, missing parts, and attachment download errors cause a failure result.
 The export keeps supported parts when another part fails.
 HTML conversion cannot read local files or request external resources.
 If conversion fails, the HTML stays in the export, but the document status is `failed`.
 
 With `--no-convert`, a complete document requires its source files, not converted PDFs.
-This option does not suppress download errors or unsupported attachment reports.
+This option does not suppress errors in document or attachment downloads.
 An export with conversion enabled cannot skip HTML that has no verified PDF conversion.
 
 Atomic writes, manifests, and offline checks apply to filesystem storage.
@@ -184,7 +184,18 @@ also uses `inbox`. These sources do not specify an archive filter or its meaning
 The listing includes `isUpload` and `accessInfo.owner.isMe`.
 Those fields give data about returned items. They do not prove that the listing includes all uploads or shared items.
 Coverage of archived documents, uploads, and shared items is unverified.
-Receipt listings include attachments, but this project has no verified endpoint to download them.
+Receipt attachments use `GET /v1/attachments/{id}` with `Accept: application/pdf`.
+The [download handler](https://inbox.kivra.com/dispatch-DFjLvkbw-1.319.1.js)
+and [HTTP client](https://inbox.kivra.com/typography-DrF9Dkl4-1.319.1.js)
+in Kivra web client `1.319.1` specify this request and its authentication.
+
+The exporter saves each attachment as a PDF in the receipt directory, with a `_partN` suffix.
+The private metadata records attachment IDs in sequence.
+The completion manifest requires the receipt PDF and all its attachment PDFs.
+
+An attachment error does not stop subsequent downloads. The exporter keeps downloaded files.
+A new export attempts receipts with missing or changed attachment files again.
+`--no-convert` also downloads attachment PDFs. Kivra provides these PDFs directly.
 
 Before calling an export complete, compare category counts with the Kivra interface.
 Do not infer coverage from exit code `0`.

@@ -116,7 +116,7 @@ class SourceOnlyTests(SyntheticExportCase):
         self.assertFalse(self.store.is_complete(self.letter.get_metadata()))
         self.assertEqual(next(self.root.rglob("*.html")).read_bytes(), HTML.encode("utf-8"))
 
-    def test_source_mode_still_reports_unsupported_parts_and_attachments(self):
+    def test_source_mode_still_reports_unsupported_parts_and_attachment_errors(self):
         self.api.get_content_details.return_value["parts"].append(
             {"content_type": "image/png", "key": "synthetic"}
         )
@@ -127,9 +127,11 @@ class SourceOnlyTests(SyntheticExportCase):
             receipt_page([{**RECEIPT, "attachments": [{"id": "synthetic"}]}])
             if op == "Receipts" else self.query(op, q, v)
         )
+        self.api.get_receipt_attachment.side_effect = RuntimeError("synthetic")
         stats = self.fetch("receipts")
         self.assertEqual(stats["receipts_failed"], 1)
-        self.assertEqual(stats["receipts_unsupported"], 1)
+        self.assertEqual(stats["receipts_unsupported"], 0)
+        self.api.get_receipt_attachment.assert_called_once_with("synthetic")
 
     def test_dry_run_does_not_write_or_convert(self):
         self.store = FileSystemStoreProvider(self.root / "dry", dry_run=True, convert_html=False)

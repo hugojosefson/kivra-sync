@@ -97,6 +97,14 @@ class KivraApiClient:
     def get_pdf(self, url):
         return self._pdf(self._get(url, "application/pdf"))
 
+    def get_receipt_attachment(self, attachment_id):
+        if (not isinstance(attachment_id, str) or not attachment_id.strip()
+                or attachment_id in (".", "..")):
+            raise ApiError("invalid_data")
+        # Kivra web client 1.319.1 uses this PDF endpoint for receipt attachments.
+        url = f"https://app.api.kivra.com/v1/attachments/{quote(attachment_id, safe='')}"
+        return self._pdf(self._get(url, "application/pdf"))
+
     def get_content_details(self, content_key):
         url = f"https://app.api.kivra.com/v1/content/{quote(content_key, safe='')}"
         return self._json(self._get(url, "application/json"))

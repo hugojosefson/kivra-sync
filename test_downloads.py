@@ -46,6 +46,7 @@ class SyntheticExportCase(unittest.TestCase):
         self.api = Mock(actor_key="synthetic-actor")
         self.api.get_content_file.return_value = PDF
         self.api.get_pdf.return_value = PDF
+        self.api.get_receipt_attachment.return_value = PDF
         self.api.get_content_details.return_value = {
             "parts": [{"content_type": "application/pdf", "key": "file-test"}]
         }
@@ -146,16 +147,17 @@ class DownloadTests(SyntheticExportCase):
                 self.assertEqual(stats["letters_missing"], 1)
                 self.assertEqual(stats["letters_failed"], 1)
 
-    def test_receipt_attachments_are_reported(self):
+    def test_receipt_attachments_are_downloaded(self):
         def query(operation, query, variables):
             if operation == "Receipts":
                 return receipt_page([{**RECEIPT, "attachments": [{"id": "test", "type": "test"}]}])
             return self.query(operation, query, variables)
         self.api.graphql_query.side_effect = query
         stats = self.fetch("receipts")
-        self.assertEqual(stats["receipts_failed"], 1)
-        self.assertEqual(stats["receipts_unsupported"], 1)
-        self.assertEqual(len(list(self.root.rglob("*.pdf"))), 1)
+        self.assertEqual(stats["receipts_stored"], 1)
+        self.assertEqual(stats["receipts_unsupported"], 0)
+        self.assertEqual(len(list(self.root.rglob("*.pdf"))), 2)
+        self.api.get_receipt_attachment.assert_called_once_with("test")
 
     def test_storage_false_and_metadata_false_are_failures(self):
         for method in ("store", "report_metadata", "complete_document"):
