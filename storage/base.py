@@ -6,6 +6,16 @@ from abc import ABC, abstractmethod
 class DocumentStoreProvider(ABC):
     """Abstract base class for document storage providers."""
 
+    def is_complete(self, metadata):
+        """Keep the provider lookup unless it has stronger validation."""
+        return self.exists(metadata)
+
+    def complete_document(self, metadata, parts):
+        return True
+
+    def report_run(self, stats):
+        return True
+
     @abstractmethod
     def report_listing(self, doc_type, listing):
         """
