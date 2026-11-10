@@ -63,7 +63,6 @@ class KivraApiClient:
         }
         
         logging.debug(f"GraphQL query: {operation_name}")
-        logging.debug(f"Variables: {variables}")
         
         response = self.session.post(
             self.graphql_url,
@@ -72,13 +71,12 @@ class KivraApiClient:
         )
         
         if response.status_code != 200:
-            logging.error(f"GraphQL error: {response.status_code}, {response.text}")
+            logging.error("GraphQL HTTP status: %d", response.status_code)
             raise Exception(f"GraphQL query failed: {response.status_code}")
             
         data = response.json()
         if 'errors' in data:
-            logging.error(f"GraphQL errors: {data['errors']}")
-            raise Exception(f"GraphQL query returned errors: {data['errors']}")
+            raise RuntimeError("Kivra GraphQL error")
             
         return data
     
@@ -101,10 +99,6 @@ class KivraApiClient:
         
         if response.status_code != 200:
             logging.error(f"Failed to get PDF. Status: {response.status_code}")
-            logging.error(f"URL: {url}")
-            logging.error(f"Headers: {headers}")
-            logging.error(f"Response headers: {dict(response.headers)}")
-            logging.error(f"Response body: {response.text}")
             raise Exception(f"Failed to get PDF: {response.status_code}")
         
         return response.content
@@ -129,8 +123,6 @@ class KivraApiClient:
         
         if response.status_code != 200:
             logging.error(f"Failed to get content details. Status: {response.status_code}")
-            logging.error(f"URL: {content_url}")
-            logging.error(f"Response: {response.text}")
             raise Exception(f"Failed to get content details: {response.status_code}")
         
         return response.json()
@@ -155,8 +147,6 @@ class KivraApiClient:
         
         if response.status_code != 200:
             logging.error(f"Failed to get content file. Status: {response.status_code}")
-            logging.error(f"URL: {file_url}")
-            logging.error(f"Response: {response.text}")
             raise Exception(f"Failed to get content file: {response.status_code}")
         
         return response.content

@@ -146,7 +146,7 @@ class TerminalQRTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     auth._poll_for_auth('/poll', 'test-code', 'test-verifier')
         output = self.output.getvalue()
-        error_position = output.index('Error during polling. Status: stop')
+        error_position = output.index('BankID polling failure')
         self.assertNotIn('\x1b[H', output[error_position:])
         self.assertNotIn('\x1b[J', output[error_position:])
         self.assertEqual(auth.session.get.call_count, 2)
