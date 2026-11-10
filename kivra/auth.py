@@ -40,7 +40,7 @@ class KivraAuth:
             dict: Authentication tokens and user information
         """
         # Initialize session
-        self.session.get("https://app.kivra.com/")
+        self.session.get("https://app.kivra.com/", timeout=(15, 30))
         
         # Generate code verifier and challenge
         code_verifier = self._generate_code_verifier()
@@ -75,15 +75,14 @@ class KivraAuth:
             )
 
         # Poll for authentication completion (refreshes the QR on each poll)
-        token_info = self._poll_for_auth(next_poll_url, auth_code, code_verifier)
-
-        # Clean up temporary QR code file
         try:
-            os.remove(self.qr_temp_path)
-        except:
-            pass
-
-        return token_info
+            return self._poll_for_auth(next_poll_url, auth_code, code_verifier)
+        finally:
+            self.session.close()
+            try:
+                os.remove(self.qr_temp_path)
+            except FileNotFoundError:
+                pass
 
     def _render_and_display_qr(self, qr_code_value):
         """Display an animated BankID QR string through the selected provider.
@@ -141,7 +140,8 @@ class KivraAuth:
         
         logging.info("Initializing OAuth2 authorization")
         
-        r = self.session.post(auth_url, 
+        r = self.session.post(auth_url,
+                             timeout=(15, 30),
                              json=auth_params,
                              headers={
                                  'Content-Type': 'application/json',
@@ -177,9 +177,14 @@ class KivraAuth:
         # BankID rejects stale QR frames ("QR code is invalid"), so on each
         # pending poll we re-render the fresh qr_code from the response.
         poll_interval = 1
-        while True:
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline:
             time.sleep(poll_interval)
-            poll_response = self.session.get(f"https://app.api.kivra.com{next_poll_url}")
+            if not isinstance(next_poll_url, str) or not next_poll_url.startswith("/"):
+                raise RuntimeError("Invalid BankID poll path")
+            poll_response = self.session.get(
+                f"https://app.api.kivra.com{next_poll_url}", timeout=(15, 30)
+            )
             poll_data = poll_response.json()
             status = poll_data.get('status')
 
@@ -200,7 +205,8 @@ class KivraAuth:
                 }
                 
                 print("Fetching OAuth token...")
-                token_response = self.session.post(token_url, 
+                token_response = self.session.post(token_url,
+                                                 timeout=(15, 30),
                                                  json=token_data,
                                                  headers={'Content-Type': 'application/json'})
                 
@@ -220,13 +226,13 @@ class KivraAuth:
                 
                 # Decode base64
                 padding = '=' * (4 - len(id_token_parts[1]) % 4)
-                jwt_payload = base64.b64decode(id_token_parts[1] + padding)
+                jwt_payload = base64.urlsafe_b64decode(id_token_parts[1] + padding)
                 jwt_data = json.loads(jwt_payload)
                 
                 # Get kivra_user_id from JWT
                 actor_key = jwt_data.get('kivra_user_id')
                 
-                if not actor_key:
+                if not actor_key or not access_token:
                     logging.error("Missing Kivra user ID in token")
                     sys.exit("Missing kivra_user_id")
                 
@@ -251,3 +257,4 @@ class KivraAuth:
             else:
                 logging.error("BankID polling failure")
                 sys.exit("BankID authentication failed")
+        raise RuntimeError("BankID authentication timed out")

@@ -27,7 +27,7 @@ class FakeSession:
         self.calls = []
         self.i = 0
 
-    def get(self, url):
+    def get(self, url, **kwargs):
         self.calls.append(url)
         d = self.responses[min(self.i, len(self.responses) - 1)]
         self.i += 1
