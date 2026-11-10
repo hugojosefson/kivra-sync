@@ -5,6 +5,7 @@ from kivra.export import export_items, result
 from kivra.models import RECEIPT_DETAILS_QUERY, KivraReceipt
 from kivra.pagination import list_receipts
 from utils.content import validate_content
+from utils.errors import error_details
 from utils.helpers import format_date
 
 
@@ -60,6 +61,6 @@ class ReceiptFetcher:
                 issues.append({"reason": "content_storage_error"})
             if not issues and not self.document_store.complete_document(metadata, [pdf_metadata]):
                 issues.append({"reason": "completion_storage_error"})
-        except Exception:
-            issues.append({"reason": "document_error"})
+        except Exception as error:
+            issues.append({"reason": "document_error", **error_details(error)})
         return result(metadata, issues)

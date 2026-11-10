@@ -8,6 +8,7 @@ from pathlib import Path
 from storage.base import DocumentStoreProvider
 from utils.atomic import atomic_write
 from utils.content import validate_content
+from utils.errors import ContentError
 from utils.helpers import clean_filename
 from utils.pdf import html_to_pdf
 
@@ -131,7 +132,9 @@ class FileSystemStoreProvider(DocumentStoreProvider):
         elif content_type == "text/html":
             # Keep the source if PDF conversion fails.
             atomic_write(paths[0], data.encode("utf-8"))
-            pdf = html_to_pdf(data)
+            pdf = html_to_pdf(data, raise_errors=True)
+            if pdf is None:
+                raise ContentError("html_conversion")
             validate_content(pdf, "application/pdf")
             atomic_write(paths[1], pdf)
         return True

@@ -5,6 +5,7 @@ from kivra.export import export_items, result
 from kivra.pagination import page_data
 from kivra.models import LETTERS_QUERY, KivraLetter
 from utils.content import validate_content
+from utils.errors import ContentError, error_details
 from utils.helpers import format_date
 
 
@@ -92,12 +93,13 @@ class LetterFetcher:
                             continue
                     validate_content(data, content_type)
                     if not self.document_store.store(data, part_metadata):
-                        raise OSError("Storage failure")
+                        raise ContentError("storage_rejected")
                     saved_parts.append(part_metadata)
-                except Exception:
-                    issues.append({"reason": "content_error", "part": index})
+                except Exception as error:
+                    issues.append({"reason": "content_error", "part": index,
+                                   **error_details(error)})
             if not issues and not self.document_store.complete_document(metadata, saved_parts):
                 issues.append({"reason": "completion_storage_error"})
-        except Exception:
-            issues.append({"reason": "document_error"})
+        except Exception as error:
+            issues.append({"reason": "document_error", **error_details(error)})
         return result(metadata, issues)

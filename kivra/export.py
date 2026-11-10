@@ -2,6 +2,8 @@
 
 import logging
 
+from utils.errors import error_details, issue_description
+
 
 def export_items(kind, items, total, listing_errors, max_count, process):
     selected = items if max_count is None else items[:max_count]
@@ -19,10 +21,10 @@ def export_items(kind, items, total, listing_errors, max_count, process):
     for index, item in enumerate(selected):
         try:
             result = process(item)
-        except Exception:
+        except Exception as error:
             # Exception messages can contain URLs, credentials, or document data.
             result = {"status": "failed", "metadata": None,
-                      "issues": [{"reason": "document_error"}]}
+                      "issues": [{"reason": "document_error", **error_details(error)}]}
         stats[f"{kind}_{result['status']}"] += 1
         for issue in result["issues"]:
             if issue["reason"] in ("unsupported_content", "unsupported_attachment"):
@@ -34,7 +36,7 @@ def export_items(kind, items, total, listing_errors, max_count, process):
             print(f"{kind}: {index + 1} of {len(selected)} processed.")
         if result["issues"]:
             logging.error("%s item %d: %s", kind, index + 1,
-                          ", ".join(issue["reason"] for issue in result["issues"]))
+                          ", ".join(issue_description(issue) for issue in result["issues"]))
     return stats
 
 

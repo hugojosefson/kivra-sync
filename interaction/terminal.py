@@ -8,6 +8,7 @@ import sys
 import qrcode
 
 from interaction.base import InteractionProvider
+from interaction.summary import completion_message
 
 
 class TerminalInteractionProvider(InteractionProvider):
@@ -71,12 +72,7 @@ class TerminalInteractionProvider(InteractionProvider):
         self._frame_drawn = True
 
     def report_completion(self, stats):
-        print('\nAll done!')
-        for label, key in [('Receipts', 'receipts'), ('Letters', 'letters')]:
-            fetched = stats.get(f'{key}_fetched', 0)
-            total = stats.get(f'{key}_total', 0)
-            count = fetched if fetched == total else f'{fetched} of {total}'
-            print(f'{label}: {stats.get(f"{key}_stored", 0)} new items, {count} fetched')
+        print(completion_message(stats))
 
     def report_authentication_success(self):
         print('BankID authentication successful! Starting data sync...')

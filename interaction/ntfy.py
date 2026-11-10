@@ -10,6 +10,7 @@ import time
 import signal
 import sys
 from interaction.base import InteractionProvider
+from interaction.summary import completion_message
 
 class NtfyInteractionProvider(InteractionProvider):
     """Interaction provider that uses ntfy.sh for notifications."""
@@ -132,47 +133,19 @@ class NtfyInteractionProvider(InteractionProvider):
                 time.sleep(10)  # Wait before retrying
     
     def report_completion(self, stats):
-        """
-        Report completion statistics via ntfy.
-        
-        Args:
-            stats (dict): Statistics including receipts and letters counts
-        """
-        receipts_count = stats['receipts_total'] if stats['receipts_fetched'] == stats['receipts_total'] else f"{stats['receipts_fetched']} of {stats['receipts_total']}"
-        letters_count = stats['letters_total'] if stats['letters_fetched'] == stats['letters_total'] else f"{stats['letters_fetched']} of {stats['letters_total']}"
-        message = (
-            f"Kivra sync completed\n"
-            f"Receipts: {stats.get('receipts_stored', 0)} new items, {receipts_count} fetched\n"
-            f"Letters: {stats.get('letters_stored', 0)} new items, {letters_count} fetched"
-        )
-        
-        headers = {
-            "Title": "Kivra sync completed",
-            "Priority": "default",
-            **self.ntfy_headers
-        }
-        
+        message = completion_message(stats)
         try:
             response = requests.post(
-                f"{self.ntfy_server}/{self.ntfy_topic}",
-                data=message,
-                headers=headers
+                f"{self.ntfy_server}/{self.ntfy_topic}", data=message,
+                headers={"Title": "Kivra export report", **self.ntfy_headers},
+                timeout=(15, 30),
             )
-            
             if response.status_code != 200:
-                logging.error(f"Failed to send completion report via ntfy: {response.status_code}, {response.text}")
-                print("\nFailed to send completion report via ntfy.")
-            else:
-                print("\nCompletion report sent via ntfy.")
-        except Exception as e:
-            logging.error(f"Error sending completion report via ntfy: {str(e)}")
-            print("\nError sending completion report via ntfy.")
-        
-        # Also print to console
-        print("\nAll done!")
-        print(f"Receipts: {stats['receipts_fetched']} of {stats['receipts_total']} fetched, {stats.get('receipts_stored', 0)} stored")
-        print(f"Letters: {stats['letters_fetched']} of {stats['letters_total']} fetched, {stats.get('letters_stored', 0)} stored")
-    
+                logging.error("Export notification failure.")
+        except requests.RequestException:
+            logging.error("Export notification failure.")
+        print(message)
+
     def report_authentication_success(self):
         """
         Report that BankID authentication was successful and data sync is starting.

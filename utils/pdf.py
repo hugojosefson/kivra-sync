@@ -6,6 +6,8 @@ import logging
 import html
 from weasyprint import HTML, default_url_fetcher
 
+from utils.errors import ContentError
+
 # Renderer and font logs can contain document data.
 # Stop propagation because child loggers can use their own levels.
 for name in ("weasyprint", "fontTools"):
@@ -84,12 +86,13 @@ def text_to_html(text_content, title=None):
     
     return html_content
 
-def html_to_pdf(html_content):
+def html_to_pdf(html_content, raise_errors=False):
     """
     Convert HTML content to PDF.
     
     Args:
         html_content (str): HTML content to convert
+        raise_errors (bool): Use exceptions with fixed error codes
         
     Returns:
         bytes: PDF content as bytes, or None if conversion failed
@@ -110,10 +113,14 @@ def html_to_pdf(html_content):
     try:
         pdf_buffer = io.BytesIO()
         HTML(string=html_content, url_fetcher=fetch_resource).write_pdf(pdf_buffer)
-        if blocked:
-            logging.error("HTML conversion failure: missing resources")
-            return None
-        return pdf_buffer.getvalue()
     except Exception:
+        if raise_errors:
+            raise ContentError("html_conversion") from None
         logging.error("HTML conversion failure")
         return None
+    if blocked:
+        if raise_errors:
+            raise ContentError("html_resource")
+        logging.error("HTML conversion failure: missing resources")
+        return None
+    return pdf_buffer.getvalue()

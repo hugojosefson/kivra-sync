@@ -9,6 +9,7 @@ import logging
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from interaction.base import InteractionProvider
+from interaction.summary import completion_message
 
 class WebInteractionProvider(InteractionProvider):
     """Web-based interaction provider that serves an HTTP interface."""
@@ -102,34 +103,14 @@ class WebInteractionProvider(InteractionProvider):
             print(f"Error serving QR code via web interface. QR code saved as: {qr_image_path}")
     
     def report_completion(self, stats):
-        """
-        Report completion statistics via the web interface.
-        
-        Args:
-            stats (dict): Statistics including receipts and letters counts
-        """
-        receipts_count = stats['receipts_total'] if stats['receipts_fetched'] == stats['receipts_total'] else f"{stats['receipts_fetched']} of {stats['receipts_total']}"
-        letters_count = stats['letters_total'] if stats['letters_fetched'] == stats['letters_total'] else f"{stats['letters_fetched']} of {stats['letters_total']}"
-        
-        message = (
-            f"Sync completed successfully!\n"
-            f"Receipts: {stats.get('receipts_stored', 0)} new items, {receipts_count} fetched\n"
-            f"Letters: {stats.get('letters_stored', 0)} new items, {letters_count} fetched"
-        )
-        
-        # Send SSE update
+        message = completion_message(stats)
         self._send_sse_message({
-            "status": "complete",
+            "status": "complete" if stats.get("status") == "complete_selected_scope" else "error",
             "message": message,
-            "stats": stats
+            "stats": {key: value for key, value in stats.items() if not key.endswith("_results")},
         })
-        
-        # Also print to console
-        print("\nAll done!")
-        print(f"Receipts: {stats['receipts_fetched']} of {stats['receipts_total']} fetched, {stats.get('receipts_stored', 0)} stored")
-        print(f"Letters: {stats['letters_fetched']} of {stats['letters_total']} fetched, {stats.get('letters_stored', 0)} stored")
-        print(f"Web interface available at http://{self.host}:{self.port}")
-    
+        print(message)
+
     def report_authentication_success(self):
         """
         Report that BankID authentication was successful and data sync is starting.
@@ -272,10 +253,10 @@ class WebInteractionProvider(InteractionProvider):
                         # Run the actual sync
                         provider.callback()
                     except Exception as e:
-                        logging.error(f"Error during sync: {str(e)}")
+                        logging.error("Export failure.")
                         provider._send_sse_message({
                             "status": "error",
-                            "message": f"Sync failed: {str(e)}"
+                            "message": "Export failure."
                         })
                 
                 sync_thread = threading.Thread(target=run_sync)

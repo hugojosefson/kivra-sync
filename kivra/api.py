@@ -8,6 +8,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from utils.content import validate_content
+from utils.errors import ApiError
 
 
 class KivraApiClient:
@@ -20,7 +21,7 @@ class KivraApiClient:
         self.session = requests.Session()
         # These endpoints only read data. GraphQL POST queries also read data.
         retries = Retry(total=3, backoff_factor=0.5, backoff_max=10,
-                        respect_retry_after_header=False,
+                        respect_retry_after_header=False, raise_on_status=False,
                         status_forcelist=(429, 500, 502, 503, 504),
                         allowed_methods=("GET", "POST"))
         self.session.mount("https://", HTTPAdapter(max_retries=retries))
@@ -47,10 +48,12 @@ class KivraApiClient:
             response = self.session.request(
                 method, url, timeout=(15, 120), allow_redirects=True, **kwargs
             )
+        except requests.Timeout:
+            raise ApiError("request_timeout") from None
         except requests.RequestException:
-            raise RuntimeError("Kivra request failure") from None
+            raise ApiError("network_error") from None
         if response.status_code != 200:
-            raise RuntimeError(f"Kivra HTTP status: {response.status_code}")
+            raise ApiError("http_error", response.status_code)
         return response
 
     @staticmethod
@@ -61,7 +64,7 @@ class KivraApiClient:
                 raise ValueError
             return data
         except ValueError:
-            raise RuntimeError("Invalid Kivra JSON response") from None
+            raise ApiError("invalid_json") from None
 
     def graphql_query(self, operation_name, query, variables):
         response = self._request("POST", self.graphql_url, headers=self.get_headers(),
@@ -69,7 +72,7 @@ class KivraApiClient:
                                        "query": query, "variables": variables})
         data = self._json(response)
         if data.get("errors"):
-            raise RuntimeError("Kivra GraphQL error")
+            raise ApiError("graphql_error")
         return data
 
     def _get(self, url, accept):
@@ -87,7 +90,7 @@ class KivraApiClient:
                 if int(length) != len(data):
                     raise ValueError
             except ValueError:
-                raise RuntimeError("PDF response is not complete") from None
+                raise ApiError("pdf_length") from None
         validate_content(data, "application/pdf")
         return data
 
