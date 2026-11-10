@@ -16,9 +16,10 @@ from utils.pdf import html_to_pdf
 class FileSystemStoreProvider(DocumentStoreProvider):
     """Store files with a SHA-256 manifest for each document."""
 
-    def __init__(self, base_dir, dry_run=False):
+    def __init__(self, base_dir, dry_run=False, convert_html=True):
         self.base_dir = Path(base_dir)
         self.dry_run = dry_run
+        self.convert_html = convert_html
 
     def _get_filepath(self, metadata):
         kind = metadata["type"]
@@ -51,7 +52,7 @@ class FileSystemStoreProvider(DocumentStoreProvider):
         suffixes = {
             "application/pdf": [".pdf"],
             "text/plain": [".txt"],
-            "text/html": ["_html.html", "_html.pdf"],
+            "text/html": ["_html.html", "_html.pdf"] if self.convert_html else ["_html.html"],
         }
         return [directory / f"{name}{suffix}" for suffix in suffixes[content_type]]
 
@@ -79,7 +80,8 @@ class FileSystemStoreProvider(DocumentStoreProvider):
         # A JSON file does not prove that its document is complete.
         return self.is_complete(metadata)
 
-    def is_complete(self, metadata):
+    def is_complete(self, metadata, *, convert_html=None):
+        convert_html = self.convert_html if convert_html is None else convert_html
         if metadata.get("content_type") != "application/json":
             return False
         try:
@@ -89,12 +91,22 @@ class FileSystemStoreProvider(DocumentStoreProvider):
             files = manifest["files"]
             if len(files) < 2:
                 return False
+            file_paths = {entry["path"] for entry in files}
+            if not all(isinstance(path, str) for path in file_paths):
+                return False
             metadata_path = self._paths(metadata)[0].relative_to(self.base_dir).as_posix()
-            if metadata_path not in [entry["path"] for entry in files]:
+            if metadata_path not in file_paths:
+                return False
+            # These paired suffixes also identify conversions from older exports.
+            conversions = {path[:-5] + ".pdf" for path in file_paths
+                           if path.endswith("_html.html")}
+            if convert_html and not conversions.issubset(file_paths):
                 return False
             for entry in files:
                 path = self.base_dir / entry["path"]
                 path.resolve().relative_to(self.base_dir.resolve())
+                if not convert_html and entry["path"] in conversions:
+                    continue
                 data = path.read_bytes()
                 if len(data) != entry["size"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:
                     return False
@@ -132,6 +144,8 @@ class FileSystemStoreProvider(DocumentStoreProvider):
         elif content_type == "text/html":
             # Keep the source if PDF conversion fails.
             atomic_write(paths[0], data.encode("utf-8"))
+            if not self.convert_html:
+                return True
             pdf = html_to_pdf(data, raise_errors=True)
             if pdf is None:
                 raise ContentError("html_conversion")

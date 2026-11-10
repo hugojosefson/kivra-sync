@@ -43,6 +43,17 @@ Scan the QR code with BankID. Follow the BankID instructions for the Kivra login
 The export uses one authentication session for receipts and letters.
 It does not change or remove remote Kivra documents.
 
+To keep source files without HTML-to-PDF conversion:
+
+```bash
+scripts/export-local.sh --no-convert
+```
+
+This filesystem option keeps PDFs, HTML, plain text, and JSON metadata from Kivra.
+It creates no PDFs from HTML and does not remove PDFs from earlier exports.
+HTML can contain links to external resources. The exporter does not download those resources.
+The default export also converts HTML to PDF.
+
 The QR login does not use an identity number from the command line.
 The default output directory is `~/kivra-export/personal/`.
 An optional positional argument selects a different directory label.
@@ -129,7 +140,8 @@ nix develop
 The filesystem provider writes temporary files, flushes them, and uses atomic replacement.
 It writes a completion manifest only after metadata and all supported parts succeed.
 A new export compares each file with that manifest before it skips a document.
-This includes the HTML source and its PDF conversion.
+This includes the HTML source and, unless `--no-convert` is set, its PDF conversion.
+The offline check uses the conversion setting from the last export report.
 
 The private `export-report.json` records selected items, results, and error reasons.
 Keep this report and all exported data out of Git and public issue reports.
@@ -153,6 +165,10 @@ Unknown types, missing parts, and receipt attachments cause a failure result.
 The export keeps supported parts when another part fails.
 HTML conversion cannot read local files or request external resources.
 If conversion fails, the HTML stays in the export, but the document status is `failed`.
+
+With `--no-convert`, a complete document requires its source files, not converted PDFs.
+This option does not suppress download errors or unsupported attachment reports.
+An export with conversion enabled cannot skip HTML that has no verified PDF conversion.
 
 Atomic writes, manifests, and offline checks apply to filesystem storage.
 Paperless retains its existing document lookup.
@@ -291,6 +307,7 @@ python kivra_sync.py YYYYMMDDXXXX --max-receipts 0
 |--------|-------------|
 | `--storage-provider {filesystem,paperless}` | Storage provider to use (default: filesystem) |
 | `--base-dir DIR` | Base directory for storing documents (default: current working directory) |
+| `--no-convert` | Keep source files without HTML-to-PDF conversion (filesystem only). |
 
 ### Paperless-specific Options
 | Option | Description |

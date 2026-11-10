@@ -38,6 +38,8 @@ def fetch_documents(args, interaction_provider, document_store, temp_dir):
         "categories": {"letters": args.fetch_letters, "receipts": args.fetch_receipts},
         "dry_run": args.dry_run,
         "local_verification": isinstance(document_store, FileSystemStoreProvider),
+        "convert_html": (document_store.convert_html
+                         if isinstance(document_store, FileSystemStoreProvider) else True),
         "limited": (not args.fetch_letters or not args.fetch_receipts
                     or args.max_letters > 0 or args.max_receipts > 0),
         "coverage": {"letters_filter": "inbox",
@@ -112,6 +114,8 @@ def main():
     parser.add_argument('--storage-provider', choices=['filesystem', 'paperless'], default='filesystem',
                         help='Storage provider to use (default: filesystem)')
     parser.add_argument('--base-dir', help='Base directory for storing documents (default: current directory)')
+    parser.add_argument('--no-convert', action='store_true',
+                        help='Keep source files without HTML-to-PDF conversion (filesystem only)')
     
     # Interaction provider selection
     parser.add_argument('--interaction-provider', choices=['terminal', 'web', 'ntfy', 'local'], default='terminal',
@@ -154,6 +158,8 @@ def main():
         parser.error("Invalid output directory label")
     if args.verify_only and args.storage_provider != 'filesystem':
         parser.error("--verify-only requires filesystem storage")
+    if args.no_convert and args.storage_provider != 'filesystem':
+        parser.error("--no-convert requires filesystem storage")
     
     # Create temp directory for QR codes and other temporary files
     # Prefer env overrides and OS temp; avoid writing into read-only installs
@@ -172,7 +178,10 @@ def main():
             if args.base_dir
             else os.getcwd()
         )
-        document_store = FileSystemStoreProvider(os.path.join(base_dir, args.ssn), dry_run=args.dry_run)
+        document_store = FileSystemStoreProvider(
+            os.path.join(base_dir, args.ssn), dry_run=args.dry_run,
+            convert_html=not args.no_convert,
+        )
     elif args.storage_provider == 'paperless':
         # Check if required paperless options are provided
         if not args.paperless_url or not args.paperless_token:

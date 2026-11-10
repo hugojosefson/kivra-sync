@@ -10,6 +10,9 @@ def verify_export(store):
             raise ValueError
         if not any(report["categories"].values()):
             raise ValueError
+        convert_html = report.get("convert_html", True)
+        if type(convert_html) is not bool:
+            raise ValueError
         checked, failed = 0, 0
         for kind in ("letters", "receipts"):
             if not report["categories"][kind]:
@@ -25,13 +28,15 @@ def verify_export(store):
             for item in results:
                 checked += 1
                 if (item["status"] not in ("stored", "skipped") or item["issues"] or not item["metadata"]
-                        or not store.is_complete(item["metadata"])):
+                        or not store.is_complete(item["metadata"], convert_html=convert_html)):
                     failed += 1
         listing_errors = sum(len(report.get(f"{kind}_listing_errors", []))
                              for kind in ("letters", "receipts"))
         failed_run = report["status"] != "complete_selected_scope"
         print(f"Local verification: {checked} documents, {failed} invalid or missing.")
         print(f"Listing errors: {listing_errors}.")
+        if not convert_html:
+            print("HTML conversion: disabled. Source files only.")
         if report["limited"]:
             print("The export does not include all document categories or listed items.")
         return 1 if failed or listing_errors or failed_run else 0

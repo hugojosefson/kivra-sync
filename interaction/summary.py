@@ -26,6 +26,8 @@ def completion_message(stats):
         lines.append("The export does not include all document categories or listed items.")
     if stats.get("local_verification") is False:
         lines.append("Storage does not support local verification of all document parts.")
+    if stats.get("convert_html") is False:
+        lines.append("HTML conversion: disabled. Source files only.")
     if stats.get("dry_run"):
         lines.append("Dry run: no files stored.")
     lines.append(COVERAGE_NOTE)

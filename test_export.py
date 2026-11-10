@@ -49,6 +49,39 @@ class ExportTests(SyntheticExportCase):
         next(self.root.rglob("*.pdf")).unlink()
         self.assertEqual(verify_export(self.store), 1)
 
+    def test_source_only_report_verifies_without_repeating_cli_flag(self):
+        self.store = FileSystemStoreProvider(self.root, convert_html=False)
+        self.api.get_content_details.return_value = {
+            "parts": [{"content_type": "text/html", "body": "<p>Synthetic</p>"}],
+        }
+        with patch("storage.filesystem.html_to_pdf") as render:
+            code, stats = self.run_export()
+            render.assert_not_called()
+        self.assertEqual(code, 0)
+        self.assertIs(stats["convert_html"], False)
+        self.assertIn("HTML conversion: disabled.", completion_message(stats))
+        self.assertEqual(verify_export(FileSystemStoreProvider(self.root)), 0)
+        next(self.root.rglob("*.html")).unlink()
+        self.assertEqual(verify_export(FileSystemStoreProvider(self.root)), 1)
+
+    def test_verification_uses_report_mode_not_current_store_mode(self):
+        self.api.get_content_details.return_value = {
+            "parts": [{"content_type": "text/html", "body": "<p>Synthetic</p>"}],
+        }
+        code, stats = self.run_export()
+        self.assertEqual(code, 0)
+        next(self.root.rglob("*_html.pdf")).unlink()
+        self.assertEqual(verify_export(FileSystemStoreProvider(self.root, convert_html=False)), 1)
+        del stats["convert_html"]
+        self.store.report_run(stats)
+        self.assertEqual(verify_export(FileSystemStoreProvider(self.root, convert_html=False)), 1)
+
+    def test_verification_rejects_invalid_conversion_setting(self):
+        _, stats = self.run_export()
+        stats["convert_html"] = "false"
+        self.store.report_run(stats)
+        self.assertEqual(verify_export(self.store), 1)
+
     def test_report_failure_returns_nonzero(self):
         with patch.object(self.store, "report_run", return_value=False):
             code, stats = self.run_export()
