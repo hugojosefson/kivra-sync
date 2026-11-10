@@ -27,14 +27,49 @@ This will:
 
 ### Option 1: Using Docker (recommended)
 
-Build the image, then run it interactively. The BankID QR code is drawn directly in your terminal and refreshes until you scan it with the BankID app:
+Build the image:
 
 ```bash
-docker build -t kivra-sync .
-docker run -it --rm -v "$(pwd)/data:/data" kivra-sync:latest YYYYMMDDXXXX --base-dir /data
+docker build -t kivra-sync:local .
 ```
 
-Documents are saved to `./data` on your machine.
+Start the export in a terminal:
+
+```bash
+scripts/export-local.sh
+```
+
+Scan the QR code with BankID. Follow the BankID instructions for the Kivra login.
+The export uses one authentication session for receipts and letters.
+It does not change or remove remote Kivra documents.
+
+The QR login does not use an identity number from the command line.
+The default output directory is `~/kivra-export/personal/`.
+An optional positional argument selects a different directory label.
+For an older export, use its initial label and base directory.
+
+Set `KIVRA_EXPORT_DIR` to select a different base directory.
+The script selects the correct user mapping for rootless Docker.
+It disables container logs and writes only to the export directory and temporary memory.
+
+Do not start two exports to the same directory.
+Keep edited copies of documents in a different directory.
+A new export replaces files that fail local verification.
+
+After the export stops, do local verification without a network connection:
+
+```bash
+scripts/export-local.sh --verify-only
+```
+
+The check uses the last export report and SHA-256 manifests.
+A manifest records the size and hash of each file in a document.
+The check reports missing or changed files.
+It does not prove that Kivra returned all document categories.
+
+For download failures or missing files, start the export again with the same directory.
+The program downloads files without manifests again.
+An existing JSON file does not prove document completeness.
 
 - `-it` is required, since the QR code is shown in the terminal.
 - `--base-dir /data` makes the documents land in the mounted volume rather than inside the container.
@@ -45,13 +80,12 @@ Documents are saved to `./data` on your machine.
 For a long-running setup without an interactive terminal, use the `web` interaction provider and open the QR code in your browser:
 
 ```bash
-# Edit docker-compose.yml to set your configuration,
-# especially "your-national-identification-number-here"
-# Then run:
 docker compose build && docker compose up
 ```
 
-Then navigate to `http://localhost:8080` to trigger a sync and scan the QR code.
+Open `http://127.0.0.1:8080` to start an export and scan the QR code.
+The supplied configuration uses a loopback port and disables Docker logs.
+Keep this unauthenticated interface on loopback.
 
 The supplied Compose setup has neither an interactive terminal for `terminal` nor a desktop image viewer for `local`, so it uses `web`. The `ntfy` provider is another option for headless runs.
 
@@ -89,6 +123,70 @@ nix build && result/bin/kivra-sync --help
 nix develop
 
 ```
+
+## Export checks and limits
+
+The filesystem provider writes temporary files, flushes them, and uses atomic replacement.
+It writes a completion manifest only after metadata and all supported parts succeed.
+A new export compares each file with that manifest before it skips a document.
+This includes the HTML source and its PDF conversion.
+
+The private `export-report.json` records selected items, results, and error reasons.
+Keep this report and all exported data out of Git and public issue reports.
+With filesystem storage, console output contains counts and item positions, not document keys, names, or response bodies.
+Item positions refer to the saved listing for that category.
+
+Exit code `0` means that all selected items passed the requested operation.
+Exit code `1` indicates a failure in a download, listing, storage operation, or local check.
+Invalid command arguments return `2`.
+The status `complete_selected_scope` does not mean a complete account export.
+The report shows explicit limits and disabled categories.
+Dry runs store no files and report `dry_run`, not export success.
+
+The PDF checks examine the header and end marker.
+If an uncompressed response specifies its length, the actual length must agree.
+These checks do not prove that each PDF page has correct content.
+SHA-256 checks find local changes after storage, not subsequent changes on Kivra.
+
+Letter parts support PDF, plain text, and HTML.
+Unknown types, missing parts, and receipt attachments cause a failure result.
+The export keeps supported parts when another part fails.
+HTML conversion cannot read local files or request external resources.
+If conversion fails, the HTML stays in the export, but the document status is `failed`.
+
+Atomic writes, manifests, and offline checks apply to filesystem storage.
+Paperless retains its existing document lookup.
+Its result is `submitted_unverified`, not a verified local export.
+
+### Category coverage
+
+The current query in [kivra/models.py](kivra/models.py) uses `ContentListFilter`.
+The caller in [kivra/letters.py](kivra/letters.py) supplies only `inbox`.
+The earlier [fetch-kivra source](https://github.com/stefangorling/fetch-kivra/blob/main/fetch-kivra.py)
+also uses `inbox`. These sources do not specify an archive filter or its meaning.
+
+The listing includes `isUpload` and `accessInfo.owner.isMe`.
+Those fields give data about returned items. They do not prove that the listing includes all uploads or shared items.
+Coverage of archived documents, uploads, and shared items is unverified.
+Receipt listings include attachments, but this project has no verified endpoint to download them.
+
+Before calling an export complete, compare category counts with the Kivra interface.
+Do not infer coverage from exit code `0`.
+More category support needs documented API behavior or a private, read-only check of actual behavior.
+Do not post live API responses, identity numbers, or credentials to an issue.
+
+### Offline regression tests with Docker
+
+Build the image before these tests:
+
+```bash
+docker run --rm --network none --entrypoint sh \
+  --read-only --tmpfs /tmp \
+  -v "${PWD}:/tests:ro" -w /tests kivra-sync:local \
+  -c 'python -m unittest discover -v && python test_qr_refresh.py'
+```
+
+Tests use synthetic data and do not contact Kivra.
 
 ## Advanced Configuration
 
@@ -184,7 +282,8 @@ python kivra_sync.py YYYYMMDDXXXX --max-receipts 0
 ### General Options
 | Option | Description |
 |--------|-------------|
-| `YYYYMMDDXXXX` (positional) | Personal identity number |
+| `LABEL` (optional positional) | Output directory label (default: `personal`). No identity number required. |
+| `--verify-only` | Local verification of the last export without authentication. |
 | `--dry-run` | Do not actually store documents, just simulate |
 
 ### Storage Options

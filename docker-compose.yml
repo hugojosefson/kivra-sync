@@ -8,10 +8,10 @@ services:
       # Mount a directory to store the downloaded documents
       - ./data:/data
     ports:
-      - "8080:8080"
-      # Replace arguments in the below command with your own values
+      - "127.0.0.1:8080:8080"
+    logging:
+      driver: "none"
     command: >
-      your-national-identification-number-here
       --interaction-provider=web
       --storage-provider=filesystem
       --base-dir=/data

@@ -5,3 +5,10 @@ venv
 node_modules
 data
 __pycache__
+personal/
+Letters/
+Receipts/
+export-report.json
+*.log
+.env
+.env.*
