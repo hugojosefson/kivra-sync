@@ -146,7 +146,7 @@ class TerminalQRTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     auth._poll_for_auth('/poll', 'test-code', 'test-verifier')
         output = self.output.getvalue()
-        error_position = output.index('Error during polling. Status: stop')
+        error_position = output.index('BankID polling failure')
         self.assertNotIn('\x1b[H', output[error_position:])
         self.assertNotIn('\x1b[J', output[error_position:])
         self.assertEqual(auth.session.get.call_count, 2)
@@ -172,15 +172,13 @@ class TerminalQRTests(unittest.TestCase):
             'receipts_total': 0, 'receipts_fetched': 0, 'receipts_stored': 0,
             'letters_total': 3, 'letters_fetched': 1, 'letters_stored': 1,
         })
-        self.assertEqual(self.output.getvalue(),
-                         '\nAll done!\nReceipts: 0 new items, 0 fetched\n'
-                         'Letters: 1 new items, 1 of 3 fetched\n')
+        self.assertIn('Letters: 1 selected of 3 listed', self.output.getvalue())
+        self.assertIn('Coverage:', self.output.getvalue())
 
     def test_console_reports_missing_counters_as_zero(self):
         TerminalInteractionProvider().report_completion({'letters_total': 3})
-        self.assertEqual(self.output.getvalue(),
-                         '\nAll done!\nReceipts: 0 new items, 0 fetched\n'
-                         'Letters: 0 new items, 0 of 3 fetched\n')
+        self.assertIn('Receipts: 0 selected of 0 listed', self.output.getvalue())
+        self.assertIn('Letters: 0 selected of 3 listed', self.output.getvalue())
 
 
 if __name__ == '__main__':

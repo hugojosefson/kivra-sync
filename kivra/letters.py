@@ -1,216 +1,105 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 
-import logging
-from utils.helpers import format_date
+from kivra.export import export_items, result
+from kivra.pagination import page_data
 from kivra.models import LETTERS_QUERY, KivraLetter
+from utils.content import validate_content
+from utils.errors import ContentError, error_details
+from utils.helpers import format_date
+
 
 class LetterFetcher:
-    """Class for fetching letters from Kivra."""
-    
     def __init__(self, api_client, document_store):
-        """
-        Initialize the letter fetcher.
-        
-        Args:
-            api_client (KivraApiClient): Kivra API client
-            document_store (DocumentStoreProvider): Document store provider
-        """
         self.api_client = api_client
         self.document_store = document_store
-    
+
     def fetch_letters(self, max_count=None):
-        """
-        Fetch letters from Kivra.
-        
-        Args:
-            max_count (int, optional): Maximum number of letters to fetch
-            
-        Returns:
-            dict: Statistics about fetched letters
-        """
-        print("\nFetching letters...")
-        
+        letters, seen, errors = [], set(), []
+        after, total = None, None
         try:
-            # Fetch all letters with pagination
-            all_letters = []
-            after = None
-            
             while True:
-                variables = {
-                    "after": after,
-                    "filter": "inbox",
-                    "senderKey": None,
-                    "take": 100  # Increase per-page count for fewer requests
-                }
-                
-                data = self.api_client.graphql_query("ContentList", LETTERS_QUERY, variables)
-                
-                page_content = data.get('data', {}).get('contents', {})
-                page_letters = page_content.get('list', [])
-                all_letters.extend(page_letters)
-                
-                exists_more = page_content.get('existsMore', False)
-                if not exists_more or not page_letters:
+                page = page_data(self.api_client.graphql_query(
+                    "ContentList", LETTERS_QUERY,
+                    {"after": after, "filter": "inbox", "senderKey": None, "take": 100}
+                ), "contents")
+                if total is not None and page["total"] != total:
+                    raise ValueError("Listing changed")
+                total = page["total"]
+                if type(page["existsMore"]) is not bool:
+                    raise ValueError("Missing pagination state")
+                batch = page["list"]
+                for item in batch:
+                    key = item.get("key")
+                    if key and key in seen:
+                        raise ValueError("Duplicate item")
+                    if key:
+                        seen.add(key)
+                    letters.append(item)
+                if not page["existsMore"]:
+                    if len(letters) != total:
+                        raise ValueError("Listing is not complete")
                     break
-                    
-                # Use the last letter's key as 'after' for the next page
-                after = page_letters[-1]['key']
-                print(f"Fetched {len(all_letters)} letters of {page_content.get('total', '?')}...")
-            
-            total_letters = len(all_letters)
-            print(f"\nFound a total of {total_letters} letters")
-            
-            # Report letter list for storage
-            self.document_store.report_listing('letters', all_letters)
-            
-            # Limit the number of letters if max_count is set
-            if max_count is not None:
-                print(f"\nLimiting to {max_count} letters (of {len(all_letters)} available)")
-                all_letters = all_letters[:max_count]
-            
-            # Add a counter for stored letters
-            letters_stored = 0
-            
-            # Process each letter
-            print("\nFetching PDF and details for each letter...")
-            for letter_data in all_letters:
-                # Pass the counter to _process_letter and get the updated value
-                letters_stored = self._process_letter(letter_data, letters_stored)
-                
-            print("\nFinished processing all letters!")
-            
-            # Return statistics
-            return {
-                'letters_total': total_letters,
-                'letters_fetched': len(all_letters[:max_count] if max_count is not None else all_letters),
-                'letters_stored': letters_stored
-            }
-            
-        except Exception as e:
-            logging.error(f"Error fetching letters: {str(e)}")
-            raise
-    
-    def _process_letter(self, letter_data, letters_stored):
-        """
-        Process a single letter.
-        
-        Args:
-            letter_data (dict): Letter data from the list
-            letters_stored (int): Counter for stored letters
-            
-        Returns:
-            int: Updated counter for stored letters
-        """
-        letter_key = letter_data.get('key')
-        if not letter_key:
-            logging.warning("Letter missing key, skipping")
-            return
-        
-        # Create metadata based on date and sender
-        date = format_date(letter_data.get('receivedAt', 'unknown_date'))
-        sender = letter_data.get('sender', {}).get('name', 'unknown_sender')
-        
-        # Create letter object
-        letter = KivraLetter(letter_key, date, sender)
-        
-        # Check if JSON metadata already exists
-        json_metadata = letter.get_metadata()
-        if self.document_store.exists(json_metadata):
-            print(f"Skipping letter {letter_key} - already fetched")
-            return letters_stored
-        
-        print(f"\nProcessing letter: {letter_key}")
-        
+                if len(letters) >= total or not batch or not batch[-1].get("key"):
+                    raise ValueError("Pagination did not advance")
+                after = batch[-1]["key"]
+        except Exception:
+            errors.append("incomplete_listing")
         try:
-            # 1. Fetch detailed letter information
-            content_data = self.api_client.get_content_details(letter_key)
-            
-            # Combine metadata from the list with detailed information
-            letter_data = {**letter_data, "content": content_data}
-            
-            # 2. Store letter metadata
-            self.document_store.report_metadata(letter_data, json_metadata)
-            print(f"Saved metadata for letter {letter_key}")
-            
-            # 3. Process letter parts
-            parts_stored = self._process_letter_parts(letter, content_data)
-            if parts_stored > 0:
-                letters_stored += 1
-            
-        except Exception as e:
-            logging.error(f"Error processing letter {letter_key}: {str(e)}")
-        
-        return letters_stored
-    
-    def _process_letter_parts(self, letter, content_data):
-        """
-        Process the parts of a letter.
-        
-        Args:
-            letter (KivraLetter): Letter object
-            content_data (dict): Letter content data
-            
-        Returns:
-            int: Number of parts stored
-        """
-        parts = content_data.get('parts', [])
-        if not parts:
-            logging.error(f"Letter {letter.key} has no parts")
-            return 0
-        
-        parts_stored = 0
-        
-        for part_index, part in enumerate(parts):
-            content_type = part.get('content_type')
-            
-            # Create a letter object for this part
-            part_letter = KivraLetter(
-                letter.key, 
-                letter.date, 
-                letter.sender_name, 
-                part_index=part_index if len(parts) > 1 else None
-            )
-            
-            if content_type == 'text/plain':
-                # Save text/plain content
-                text_content = part.get('body', '')
-                text_metadata = part_letter.get_metadata(content_type='text/plain')
-                
-                if self.document_store.store(text_content, text_metadata):
-                    parts_stored += 1
-                    print(f"Saved text/plain for letter {letter.key}")
-                
-            elif content_type == 'text/html':
-                # Save HTML content
-                html_content = part.get('body')
-                html_metadata = part_letter.get_metadata(content_type='text/html')
-                
-                if self.document_store.store(html_content, html_metadata):
-                    parts_stored += 1
-                    print(f"Saved HTML for letter {letter.key}")
-                
-            elif content_type == 'application/pdf':
-                # Fetch and save PDF
-                file_key = part.get('key')
-                if not file_key:
-                    logging.warning(f"PDF part in letter {letter.key} missing key")
+            if self.document_store.report_listing("letters", letters) is False:
+                errors.append("listing_storage_error")
+        except Exception:
+            errors.append("listing_storage_error")
+        return export_items("letters", letters, total or 0, errors,
+                            max_count, self._process_letter)
+
+    def _process_letter(self, item):
+        letter = KivraLetter(
+            item["key"], format_date(item.get("receivedAt")),
+            (item.get("sender") or {}).get("name") or "unknown_sender"
+        )
+        metadata = letter.get_metadata()
+        if not letter.key:
+            return result(metadata, [{"reason": "missing_key"}])
+        if self.document_store.is_complete(metadata):
+            return result(metadata, [], skipped=True)
+        issues, saved_parts = [], []
+        try:
+            content = self.api_client.get_content_details(letter.key)
+            if not self.document_store.report_metadata({**item, "content": content}, metadata):
+                issues.append({"reason": "metadata_storage_error"})
+            parts = content.get("parts")
+            if not isinstance(parts, list) or not parts:
+                return result(metadata, issues + [{"reason": "missing_content"}])
+            for index, part in enumerate(parts):
+                part_metadata = KivraLetter(
+                    letter.key, letter.date, letter.sender_name,
+                    part_index=index if len(parts) > 1 else None
+                ).get_metadata(content_type=part.get("content_type"))
+                content_type = part.get("content_type")
+                if content_type not in ("application/pdf", "text/plain", "text/html"):
+                    issues.append({"reason": "unsupported_content", "part": index})
                     continue
-                
                 try:
-                    # Fetch PDF content
-                    pdf_content = self.api_client.get_content_file(letter.key, file_key)
-                    
-                    # Store PDF
-                    pdf_metadata = part_letter.get_metadata(content_type='application/pdf')
-                    if self.document_store.store(pdf_content, pdf_metadata):
-                        parts_stored += 1
-                        print(f"Saved PDF for letter {letter.key}")
-                    
-                except Exception as e:
-                    logging.error(f"Error fetching PDF for letter {letter.key}, file {file_key}: {str(e)}")
-                    raise
-            else:
-                logging.warning(f"Unknown content type in letter {letter.key}: {content_type}")
-        
-        return parts_stored
+                    if content_type == "application/pdf":
+                        if not part.get("key"):
+                            issues.append({"reason": "missing_content", "part": index})
+                            continue
+                        data = self.api_client.get_content_file(letter.key, part["key"])
+                    else:
+                        data = part.get("body")
+                        if not isinstance(data, str) or not data.strip():
+                            issues.append({"reason": "missing_content", "part": index})
+                            continue
+                    validate_content(data, content_type)
+                    if not self.document_store.store(data, part_metadata):
+                        raise ContentError("storage_rejected")
+                    saved_parts.append(part_metadata)
+                except Exception as error:
+                    issues.append({"reason": "content_error", "part": index,
+                                   **error_details(error)})
+            if not issues and not self.document_store.complete_document(metadata, saved_parts):
+                issues.append({"reason": "completion_storage_error"})
+        except Exception as error:
+            issues.append({"reason": "document_error", **error_details(error)})
+        return result(metadata, issues)

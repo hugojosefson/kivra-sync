@@ -27,14 +27,60 @@ This will:
 
 ### Option 1: Using Docker (recommended)
 
-Build the image, then run it interactively. The BankID QR code is drawn directly in your terminal and refreshes until you scan it with the BankID app:
+Build the image:
 
 ```bash
-docker build -t kivra-sync .
-docker run -it --rm -v "$(pwd)/data:/data" kivra-sync:latest YYYYMMDDXXXX --base-dir /data
+docker build -t kivra-sync:local .
 ```
 
-Documents are saved to `./data` on your machine.
+Start the export in a terminal:
+
+```bash
+scripts/export-local.sh
+```
+
+Scan the QR code with BankID. Follow the BankID instructions for the Kivra login.
+The export uses one authentication session for receipts and letters.
+It does not change or remove remote Kivra documents.
+
+To keep source files without HTML-to-PDF conversion:
+
+```bash
+scripts/export-local.sh --no-convert
+```
+
+This filesystem option keeps PDFs, HTML, plain text, and JSON metadata from Kivra.
+It creates no PDFs from HTML and does not remove PDFs from earlier exports.
+HTML can contain links to external resources. The exporter does not download those resources.
+The default export also converts HTML to PDF.
+
+The QR login does not use an identity number from the command line.
+The default output directory is `~/kivra-export/personal/`.
+An optional positional argument selects a different directory label.
+For an older export, use its initial label and base directory.
+
+Set `KIVRA_EXPORT_DIR` to select a different base directory.
+The script selects the correct user mapping for rootless Docker.
+It disables container logs and writes only to the export directory and temporary memory.
+
+Do not start two exports to the same directory.
+Keep edited copies of documents in a different directory.
+A new export replaces files that fail local verification.
+
+After the export stops, do local verification without a network connection:
+
+```bash
+scripts/export-local.sh --verify-only
+```
+
+The check uses the last export report and SHA-256 manifests.
+A manifest records the size and hash of each file in a document.
+The check reports missing or changed files.
+It does not prove that Kivra returned all document categories.
+
+For download failures or missing files, start the export again with the same directory.
+The program downloads files without manifests again.
+An existing JSON file does not prove document completeness.
 
 - `-it` is required, since the QR code is shown in the terminal.
 - `--base-dir /data` makes the documents land in the mounted volume rather than inside the container.
@@ -45,13 +91,12 @@ Documents are saved to `./data` on your machine.
 For a long-running setup without an interactive terminal, use the `web` interaction provider and open the QR code in your browser:
 
 ```bash
-# Edit docker-compose.yml to set your configuration,
-# especially "your-national-identification-number-here"
-# Then run:
 docker compose build && docker compose up
 ```
 
-Then navigate to `http://localhost:8080` to trigger a sync and scan the QR code.
+Open `http://127.0.0.1:8080` to start an export and scan the QR code.
+The supplied configuration uses a loopback port and disables Docker logs.
+Keep this unauthenticated interface on loopback.
 
 The supplied Compose setup has neither an interactive terminal for `terminal` nor a desktop image viewer for `local`, so it uses `web`. The `ntfy` provider is another option for headless runs.
 
@@ -89,6 +134,133 @@ nix build && result/bin/kivra-sync --help
 nix develop
 
 ```
+
+## Export checks and limits
+
+The filesystem provider writes temporary files, flushes them, and uses atomic replacement.
+It writes a completion manifest only after metadata and all supported parts succeed.
+A new export compares each file with that manifest before it skips a document.
+This includes the HTML source and, unless `--no-convert` is set, its PDF conversion.
+The offline check uses the conversion setting from the last export report.
+
+The private `export-report.json` records selected items, results, and error reasons.
+Keep this report and all exported data out of Git and public issue reports.
+With filesystem storage, console output contains counts and item positions, not document keys, names, or response bodies.
+Item positions refer to the saved listing for that category.
+
+Exit code `0` means that all selected items passed the requested operation.
+Exit code `1` indicates a failure in a download, listing, storage operation, or local check.
+Invalid command arguments return `2`.
+The status `complete_selected_scope` does not mean a complete account export.
+The report shows explicit limits and disabled categories.
+Dry runs store no files and report `dry_run`, not export success.
+
+The PDF checks examine the header and end marker.
+If an uncompressed response specifies its length, the actual length must agree.
+These checks do not prove that each PDF page has correct content.
+SHA-256 checks find local changes after storage, not subsequent changes on Kivra.
+
+Letter parts support PDF, plain text, and HTML.
+Unknown content types, missing parts, and attachment download errors cause a failure result.
+The export keeps supported parts when another part fails.
+HTML conversion cannot read local files or request external resources.
+If conversion fails, the HTML stays in the export, but the document status is `failed`.
+
+With `--no-convert`, a complete document requires its source files, not converted PDFs.
+This option does not suppress errors in document or attachment downloads.
+An export with conversion enabled cannot skip HTML that has no verified PDF conversion.
+
+Atomic writes, manifests, and offline checks apply to filesystem storage.
+Paperless retains its existing document lookup.
+Its result is `submitted_unverified`, not a verified local export.
+
+### Offline HTML diagnostics
+
+Use this command after the export stops:
+
+```bash
+scripts/export-local.sh --diagnose-html
+```
+
+The command reads the last export report and checks its saved letter HTML files.
+The command ignores the export's `--no-convert` setting. Conversion can continue for minutes.
+The Docker command disables network access and mounts the export directory read-only.
+No BankID login is necessary. The command changes no export files, PDFs, manifests, or status reports.
+
+The command prints JSON with counts and errors. It excludes URLs, filenames, document text, and raw error messages.
+URLs can contain credentials in their host, path, or query, not only in a password field.
+
+Document results identify an `item` and, for HTML sources, a `part`:
+
+- `item` is the letter position in `export-report.json`, with the first letter at `1`.
+- `part` is the part position in the saved letter metadata, with the first part at `0`.
+- `locations` gives line and column numbers. Each starts at `1`.
+- `resource` identifies one resource in a source file.
+
+Use the item metadata in the private export report to find the related HTML file.
+Examine that file in a text editor, not a browser that can read external resources.
+
+Attribute locations identify the opening HTML tag. CSS locations identify URL tokens in a `<style>` block.
+An empty `locations` list means no matching source location, for example in an embedded SVG.
+A URL can have more than one matching location. The report does not identify which reference caused the request.
+
+The error codes distinguish these conditions:
+
+- `blocked_network`: The renderer attempted an HTTP or HTTPS request.
+- `blocked_file`: The renderer attempted to read a local resource.
+- `blocked_scheme`: The resource used a different prohibited URL scheme.
+- `embedded_fetch_error`: The renderer cannot read a `data:` resource. `exception` gives a fixed exception type, not its message.
+- `relative_url_without_base`: The HTML reference has no base URL for resolution.
+- `image_load_error`, `stylesheet_load_error`, or `svg_render_error`: The renderer reported a resource error after the fetch check.
+- `html_conversion`: Conversion raised an exception. `exception` gives its type without its message.
+- `renderer_error`: The renderer reported a different error. The command does not disclose the message.
+
+The renderer cannot read external HTML resources from the network or local files.
+Some renderer errors do not stop the export's HTML conversion. This command also reports those errors.
+It does not change the conditions for a complete export. It is not a replacement for `--verify-only`.
+
+Exit code `1` indicates diagnostic errors or unreadable input. Exit code `0` indicates no diagnostic errors in the checked sources.
+
+### Category coverage
+
+The current query in [kivra/models.py](kivra/models.py) uses `ContentListFilter`.
+The caller in [kivra/letters.py](kivra/letters.py) supplies only `inbox`.
+The earlier [fetch-kivra source](https://github.com/stefangorling/fetch-kivra/blob/main/fetch-kivra.py)
+also uses `inbox`. These sources do not specify an archive filter or its meaning.
+
+The listing includes `isUpload` and `accessInfo.owner.isMe`.
+Those fields give data about returned items. They do not prove that the listing includes all uploads or shared items.
+Coverage of archived documents, uploads, and shared items is unverified.
+Receipt attachments use `GET /v1/attachments/{id}` with `Accept: application/pdf`.
+The [download handler](https://inbox.kivra.com/dispatch-DFjLvkbw-1.319.1.js)
+and [HTTP client](https://inbox.kivra.com/typography-DrF9Dkl4-1.319.1.js)
+in Kivra web client `1.319.1` specify this request and its authentication.
+
+The exporter saves each attachment as a PDF in the receipt directory, with a `_partN` suffix.
+The private metadata records attachment IDs in sequence.
+The completion manifest requires the receipt PDF and all its attachment PDFs.
+
+An attachment error does not stop subsequent downloads. The exporter keeps downloaded files.
+A new export attempts receipts with missing or changed attachment files again.
+`--no-convert` also downloads attachment PDFs. Kivra provides these PDFs directly.
+
+Before calling an export complete, compare category counts with the Kivra interface.
+Do not infer coverage from exit code `0`.
+More category support needs documented API behavior or a private, read-only check of actual behavior.
+Do not post live API responses, identity numbers, or credentials to an issue.
+
+### Offline regression tests with Docker
+
+Build the image before these tests:
+
+```bash
+docker run --rm --network none --entrypoint sh \
+  --read-only --tmpfs /tmp \
+  -v "${PWD}:/tests:ro" -w /tests kivra-sync:local \
+  -c 'python -m unittest discover -v && python test_qr_refresh.py'
+```
+
+Tests use synthetic data and do not contact Kivra.
 
 ## Advanced Configuration
 
@@ -184,7 +356,9 @@ python kivra_sync.py YYYYMMDDXXXX --max-receipts 0
 ### General Options
 | Option | Description |
 |--------|-------------|
-| `YYYYMMDDXXXX` (positional) | Personal identity number |
+| `LABEL` (optional positional) | Output directory label (default: `personal`). No identity number required. |
+| `--verify-only` | Local verification of the last export without authentication. |
+| `--diagnose-html` | Offline HTML diagnostics from the last export, without export writes. |
 | `--dry-run` | Do not actually store documents, just simulate |
 
 ### Storage Options
@@ -192,6 +366,7 @@ python kivra_sync.py YYYYMMDDXXXX --max-receipts 0
 |--------|-------------|
 | `--storage-provider {filesystem,paperless}` | Storage provider to use (default: filesystem) |
 | `--base-dir DIR` | Base directory for storing documents (default: current working directory) |
+| `--no-convert` | Keep source files without HTML-to-PDF conversion (filesystem only). |
 
 ### Paperless-specific Options
 | Option | Description |

@@ -1,40 +1,18 @@
-# Git
-.git
-.gitignore
-
-# Docker
-Dockerfile
-docker-compose.yml
-.dockerignore
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Data and temp files
-data/
-temp/
-*.log
-*.pdf
-*.html
-
-# Documentation
-*.md
+# Only application source can enter the build context.
+*
+!requirements.txt
+!VERSION
+!__version__.py
+!kivra_sync.py
+!kivra/
+!kivra/*.py
+!storage/
+!storage/*.py
+!utils/
+!utils/*.py
+!interaction/
+!interaction/*.py
+!interaction/web_static/
+!interaction/web_static/index.html
+!interaction/web_static/script.js
+!interaction/web_static/style.css

@@ -32,53 +32,72 @@ def fetch_documents(args, interaction_provider, document_store, temp_dir):
     Returns:
         int: Exit code (0 for success, non-zero for failure)
     """
+    stats = {
+        "version": 1,
+        "status": "in_progress",
+        "categories": {"letters": args.fetch_letters, "receipts": args.fetch_receipts},
+        "dry_run": args.dry_run,
+        "local_verification": isinstance(document_store, FileSystemStoreProvider),
+        "convert_html": (document_store.convert_html
+                         if isinstance(document_store, FileSystemStoreProvider) else True),
+        "limited": (not args.fetch_letters or not args.fetch_receipts
+                    or args.max_letters > 0 or args.max_receipts > 0),
+        "coverage": {"letters_filter": "inbox",
+                     "unverified": ["archived", "uploads", "shared"]},
+    }
     try:
-        # Authenticate with Kivra
+        if not document_store.report_run(stats):
+            raise OSError("Report storage failure")
         auth = KivraAuth(temp_dir, interaction_provider)
         token_info = auth.authenticate(args.ssn)
-        
-        # Extract tokens
-        access_token = token_info['access_token']
-        actor_key = token_info['actor_key']
-        
-        # Initialize API client
-        api_client = KivraApiClient(access_token, actor_key)
-        
-        # Initialize statistics
-        stats = {
-            'receipts_total': 0,
-            'receipts_fetched': 0,
-            'receipts_stored': 0,
-            'letters_total': 0,
-            'letters_fetched': 0,
-            'letters_stored': 0
-        }
-        
-        # Fetch receipts if enabled
-        if args.fetch_receipts:
-            receipt_fetcher = ReceiptFetcher(api_client, document_store)
-            receipt_stats = receipt_fetcher.fetch_receipts(max_count=None if args.max_receipts == 0 else args.max_receipts)
-            stats.update(receipt_stats)
-        
-        # Fetch letters if enabled
-        if args.fetch_letters:
-            letter_fetcher = LetterFetcher(api_client, document_store)
-            letter_stats = letter_fetcher.fetch_letters(max_count=None if args.max_letters == 0 else args.max_letters)
-            stats.update(letter_stats)
-        
-        # Report completion
+        api_client = KivraApiClient(token_info["access_token"], token_info["actor_key"])
+        try:
+            for enabled, fetcher, method, maximum in (
+                (args.fetch_receipts, ReceiptFetcher, "fetch_receipts", args.max_receipts),
+                (args.fetch_letters, LetterFetcher, "fetch_letters", args.max_letters),
+            ):
+                if enabled:
+                    stats.update(getattr(fetcher(api_client, document_store), method)(
+                        max_count=maximum or None
+                    ))
+        finally:
+            api_client.session.close()
+        failed = any(stats.get(f"{kind}_failed", 0)
+                     or stats.get(f"{kind}_listing_errors", [])
+                     for kind in ("letters", "receipts"))
+        stats["status"] = "incomplete" if failed else "complete_selected_scope"
+        if not failed and not stats["local_verification"]:
+            stats["status"] = "submitted_unverified"
+        if args.dry_run:
+            stats["status"] = "dry_run"
+            for kind in ("letters", "receipts"):
+                stats[f"{kind}_stored"] = 0
+        exit_code = 1 if failed else 0
+    except (Exception, SystemExit):
+        logging.error("Export failure. No response data included.")
+        stats["status"] = "failed"
+        exit_code = 1
+    try:
+        if not document_store.report_run(stats):
+            raise OSError("Report storage failure")
+    except Exception:
+        logging.error("Export report storage failure.")
+        stats["status"] = "failed"
+        exit_code = 1
+    try:
         interaction_provider.report_completion(stats)
-        
-        return 0
-    except Exception as e:
-        logging.error(f"Error: {str(e)}")
+    except Exception:
+        logging.error("Export notification failure.")
         return 1
+    return exit_code
 
 def main():
     """Main function to fetch receipts and letters from Kivra."""
     
     # Configure logging
     logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
+    os.umask(0o077)
     
     # Parse command line arguments
     parser = argparse.ArgumentParser(
@@ -86,12 +105,20 @@ def main():
         prog='kivra-sync'
     )
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
-    parser.add_argument('ssn', help='Personal identity number (YYYYMMDDXXXX)')
+    parser.add_argument('ssn', nargs='?', default='personal',
+                        help='Output directory label (default: personal). BankID does not use this label.')
+    offline = parser.add_mutually_exclusive_group()
+    offline.add_argument('--verify-only', action='store_true',
+                         help='Do local file verification without authentication')
+    offline.add_argument('--diagnose-html', action='store_true',
+                         help='Report saved HTML errors without authentication or export writes')
     
     # Storage provider selection
     parser.add_argument('--storage-provider', choices=['filesystem', 'paperless'], default='filesystem',
                         help='Storage provider to use (default: filesystem)')
-    parser.add_argument('--base-dir', help='Base directory for storing documents (default: script directory)')
+    parser.add_argument('--base-dir', help='Base directory for storing documents (default: current directory)')
+    parser.add_argument('--no-convert', action='store_true',
+                        help='Keep source files without HTML-to-PDF conversion (filesystem only)')
     
     # Interaction provider selection
     parser.add_argument('--interaction-provider', choices=['terminal', 'web', 'ntfy', 'local'], default='terminal',
@@ -126,16 +153,30 @@ def main():
     parser.add_argument('--max-letters', type=int, default=0, help='Maximum number of letters to fetch (default: 0, 0 for unlimited)')
     
     args = parser.parse_args()
+    if args.max_letters < 0 or args.max_receipts < 0:
+        parser.error("Document limits must not be negative")
+    if not args.fetch_letters and not args.fetch_receipts:
+        parser.error("Select one or more document categories")
+    if not args.ssn or args.ssn in ('.', '..') or '/' in args.ssn or '\\' in args.ssn:
+        parser.error("Invalid output directory label")
+    if (args.verify_only or args.diagnose_html) and args.storage_provider != 'filesystem':
+        parser.error("Offline checks are for filesystem storage only")
+    if args.no_convert and args.storage_provider != 'filesystem':
+        parser.error("--no-convert requires filesystem storage")
     
+    if args.diagnose_html:
+        from storage.html_diagnostics import run_diagnostics
+        store = FileSystemStoreProvider(os.path.join(args.base_dir or os.getcwd(), args.ssn))
+        sys.exit(run_diagnostics(store))
+
     # Create temp directory for QR codes and other temporary files
     # Prefer env overrides and OS temp; avoid writing into read-only installs
-    script_dir = os.path.dirname(os.path.abspath(__file__))
     temp_base = (
         os.environ.get("XDG_RUNTIME_DIR")
         or tempfile.gettempdir()
     )
-    temp_dir = os.path.join(temp_base, "kivra-sync")
-    os.makedirs(temp_dir, exist_ok=True)
+    temporary = tempfile.TemporaryDirectory(prefix="kivra-sync-", dir=temp_base)
+    temp_dir = temporary.name
     
     # Initialize the document storage provider
     if args.storage_provider == 'filesystem':
@@ -145,7 +186,10 @@ def main():
             if args.base_dir
             else os.getcwd()
         )
-        document_store = FileSystemStoreProvider(os.path.join(base_dir, args.ssn), dry_run=args.dry_run)
+        document_store = FileSystemStoreProvider(
+            os.path.join(base_dir, args.ssn), dry_run=args.dry_run,
+            convert_html=not args.no_convert,
+        )
     elif args.storage_provider == 'paperless':
         # Check if required paperless options are provided
         if not args.paperless_url or not args.paperless_token:
@@ -160,6 +204,13 @@ def main():
             dry_run=args.dry_run
         )
     
+    if args.verify_only:
+        from storage.verify import verify_export
+        from interaction.summary import COVERAGE_NOTE
+        exit_code = verify_export(document_store)
+        print(COVERAGE_NOTE)
+        sys.exit(exit_code)
+
     # Initialize the interaction provider
     if args.interaction_provider == 'local':
         logging.warning("The 'local' interaction provider is deprecated and will be removed in a future release; "

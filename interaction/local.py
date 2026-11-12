@@ -4,6 +4,7 @@
 from PIL import Image
 import logging
 from interaction.base import InteractionProvider
+from interaction.summary import completion_message
 
 class LocalInteractionProvider(InteractionProvider):
     """Default interaction provider that displays QR codes locally and reports to console."""
@@ -24,18 +25,8 @@ class LocalInteractionProvider(InteractionProvider):
             print(f"QR code saved as '{qr_image_path}'")
     
     def report_completion(self, stats):
-        """
-        Report completion statistics to console.
-        
-        Args:
-            stats (dict): Statistics including receipts and letters counts
-        """
-        print("\nAll done!")
-        receipts_count = stats['receipts_total'] if stats['receipts_fetched'] == stats['receipts_total'] else f"{stats['receipts_fetched']} of {stats['receipts_total']}"
-        letters_count = stats['letters_total'] if stats['letters_fetched'] == stats['letters_total'] else f"{stats['letters_fetched']} of {stats['letters_total']}"
-        print(f"Receipts: {stats.get('receipts_stored', 0)} new items, {receipts_count} fetched")
-        print(f"Letters: {stats.get('letters_stored', 0)} new items, {letters_count} fetched")
-    
+        print(completion_message(stats))
+
     def report_authentication_success(self):
         """
         Report that BankID authentication was successful and data sync is starting.
