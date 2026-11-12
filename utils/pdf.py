@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 
+from contextlib import nullcontext
 import io
 import logging
 import html
@@ -86,13 +87,14 @@ def text_to_html(text_content, title=None):
     
     return html_content
 
-def html_to_pdf(html_content, raise_errors=False):
+def html_to_pdf(html_content, raise_errors=False, *, diagnostics=None):
     """
     Convert HTML content to PDF.
     
     Args:
         html_content (str): HTML content to convert
         raise_errors (bool): Use exceptions with fixed error codes
+        diagnostics: Optional collector for offline error analysis
         
     Returns:
         bytes: PDF content as bytes, or None if conversion failed
@@ -103,17 +105,27 @@ def html_to_pdf(html_content, raise_errors=False):
         # Do not read local files or send requests from document HTML.
         if not url.startswith("data:"):
             blocked.append(True)
+            if diagnostics is not None:
+                diagnostics.resource(url, "blocked_resource")
             raise ValueError("External HTML resource")
         try:
             return default_url_fetcher(url, *args, **kwargs)
-        except Exception:
+        except Exception as error:
             blocked.append(True)
+            if diagnostics is not None:
+                diagnostics.resource(url, "embedded_fetch_error", error)
             raise ValueError("Invalid HTML resource") from None
 
     try:
         pdf_buffer = io.BytesIO()
-        HTML(string=html_content, url_fetcher=fetch_resource).write_pdf(pdf_buffer)
-    except Exception:
+        with diagnostics.capture() if diagnostics is not None else nullcontext():
+            document = HTML(string=html_content, url_fetcher=fetch_resource)
+            if diagnostics is not None:
+                diagnostics.base_url = document.base_url
+            document.write_pdf(pdf_buffer)
+    except Exception as error:
+        if diagnostics is not None:
+            diagnostics.conversion(error)
         if raise_errors:
             raise ContentError("html_conversion") from None
         logging.error("HTML conversion failure")

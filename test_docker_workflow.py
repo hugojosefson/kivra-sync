@@ -62,6 +62,16 @@ source "${1}" "${@:2}"
         self.assertTrue(args[args.index("-v") + 1].endswith(":/data:ro"))
         self.assertEqual(args[-1], "--verify-only")
 
+    def test_html_diagnostics_are_offline_in_any_argument_position(self):
+        (self.root / "synthetic export").mkdir()
+        for arguments in (("--diagnose-html",), ("personal", "--diagnose-html"),
+                          ("personal", "--verify-only")):
+            with self.subTest(arguments=arguments):
+                args = self.invoke(*arguments)
+                self.assertEqual(args[args.index("--network") + 1], "none")
+                self.assertNotIn("-it", args)
+                self.assertTrue(args[args.index("-v") + 1].endswith(":/data:ro"))
+
 
 if __name__ == "__main__":
     unittest.main()

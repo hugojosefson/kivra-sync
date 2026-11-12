@@ -107,8 +107,11 @@ def main():
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
     parser.add_argument('ssn', nargs='?', default='personal',
                         help='Output directory label (default: personal). BankID does not use this label.')
-    parser.add_argument('--verify-only', action='store_true',
-                        help='Do local file verification without authentication')
+    offline = parser.add_mutually_exclusive_group()
+    offline.add_argument('--verify-only', action='store_true',
+                         help='Do local file verification without authentication')
+    offline.add_argument('--diagnose-html', action='store_true',
+                         help='Report saved HTML errors without authentication or export writes')
     
     # Storage provider selection
     parser.add_argument('--storage-provider', choices=['filesystem', 'paperless'], default='filesystem',
@@ -156,11 +159,16 @@ def main():
         parser.error("Select one or more document categories")
     if not args.ssn or args.ssn in ('.', '..') or '/' in args.ssn or '\\' in args.ssn:
         parser.error("Invalid output directory label")
-    if args.verify_only and args.storage_provider != 'filesystem':
-        parser.error("--verify-only requires filesystem storage")
+    if (args.verify_only or args.diagnose_html) and args.storage_provider != 'filesystem':
+        parser.error("Offline checks are for filesystem storage only")
     if args.no_convert and args.storage_provider != 'filesystem':
         parser.error("--no-convert requires filesystem storage")
     
+    if args.diagnose_html:
+        from storage.html_diagnostics import run_diagnostics
+        store = FileSystemStoreProvider(os.path.join(args.base_dir or os.getcwd(), args.ssn))
+        sys.exit(run_diagnostics(store))
+
     # Create temp directory for QR codes and other temporary files
     # Prefer env overrides and OS temp; avoid writing into read-only installs
     temp_base = (

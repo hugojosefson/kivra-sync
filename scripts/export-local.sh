@@ -12,7 +12,13 @@ fi
 
 mode="rw"
 run_args=(-it)
-if [[ "${1:-}" == "--verify-only" ]]; then
+offline=false
+for argument in "${@}"; do
+  if [[ "${argument}" == "--verify-only" || "${argument}" == "--diagnose-html" ]]; then
+    offline=true
+  fi
+done
+if [[ "${offline}" == true ]]; then
   mode="ro"
   run_args=(--network none)
   if [[ ! -d "${export_dir}" ]]; then

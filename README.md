@@ -174,6 +174,53 @@ Atomic writes, manifests, and offline checks apply to filesystem storage.
 Paperless retains its existing document lookup.
 Its result is `submitted_unverified`, not a verified local export.
 
+### Offline HTML diagnostics
+
+Use this command after the export stops:
+
+```bash
+scripts/export-local.sh --diagnose-html
+```
+
+The command reads the last export report and checks its saved letter HTML files.
+The command ignores the export's `--no-convert` setting. Conversion can continue for minutes.
+The Docker command disables network access and mounts the export directory read-only.
+No BankID login is necessary. The command changes no export files, PDFs, manifests, or status reports.
+
+The command prints JSON with counts and errors. It excludes URLs, filenames, document text, and raw error messages.
+URLs can contain credentials in their host, path, or query, not only in a password field.
+
+Document results identify an `item` and, for HTML sources, a `part`:
+
+- `item` is the letter position in `export-report.json`, with the first letter at `1`.
+- `part` is the part position in the saved letter metadata, with the first part at `0`.
+- `locations` gives line and column numbers. Each starts at `1`.
+- `resource` identifies one resource in a source file.
+
+Use the item metadata in the private export report to find the related HTML file.
+Examine that file in a text editor, not a browser that can read external resources.
+
+Attribute locations identify the opening HTML tag. CSS locations identify URL tokens in a `<style>` block.
+An empty `locations` list means no matching source location, for example in an embedded SVG.
+A URL can have more than one matching location. The report does not identify which reference caused the request.
+
+The error codes distinguish these conditions:
+
+- `blocked_network`: The renderer attempted an HTTP or HTTPS request.
+- `blocked_file`: The renderer attempted to read a local resource.
+- `blocked_scheme`: The resource used a different prohibited URL scheme.
+- `embedded_fetch_error`: The renderer cannot read a `data:` resource. `exception` gives a fixed exception type, not its message.
+- `relative_url_without_base`: The HTML reference has no base URL for resolution.
+- `image_load_error`, `stylesheet_load_error`, or `svg_render_error`: The renderer reported a resource error after the fetch check.
+- `html_conversion`: Conversion raised an exception. `exception` gives its type without its message.
+- `renderer_error`: The renderer reported a different error. The command does not disclose the message.
+
+The renderer cannot read external HTML resources from the network or local files.
+Some renderer errors do not stop the export's HTML conversion. This command also reports those errors.
+It does not change the conditions for a complete export. It is not a replacement for `--verify-only`.
+
+Exit code `1` indicates diagnostic errors or unreadable input. Exit code `0` indicates no diagnostic errors in the checked sources.
+
 ### Category coverage
 
 The current query in [kivra/models.py](kivra/models.py) uses `ContentListFilter`.
@@ -311,6 +358,7 @@ python kivra_sync.py YYYYMMDDXXXX --max-receipts 0
 |--------|-------------|
 | `LABEL` (optional positional) | Output directory label (default: `personal`). No identity number required. |
 | `--verify-only` | Local verification of the last export without authentication. |
+| `--diagnose-html` | Offline HTML diagnostics from the last export, without export writes. |
 | `--dry-run` | Do not actually store documents, just simulate |
 
 ### Storage Options
